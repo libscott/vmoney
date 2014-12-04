@@ -19,8 +19,8 @@ Input = collections.namedtuple('Input', 'owner,txid,amount')
 
 def send(args):
     ctx = get_ctx(args)
-    print args
-    return
+    amount = int(args.amount)
+    recipient_address = args.address
     # create tx
     inputs = []
     change = -1
@@ -30,7 +30,7 @@ def send(args):
         if change >= 0:
             break
 
-    if tx_change <= 0:
+    if change <= 0:
         print >>sys.stderr, ("Insufficient funds to send %s" % amount)
         return
 
@@ -39,7 +39,7 @@ def send(args):
     sha = hashlib.sha256()
     for inp in inputs:
         sha.update(inp.txid)
-        del db[inp.location]
+        del ctx.db['data/%s/balance/%s' % (ctx.address, inp.txid)]
 
     txid = sha.hexdigest()
     deposit_path = 'data/%s/balance/%s' % (recipient_address, txid)
@@ -53,7 +53,7 @@ def send(args):
     # outputs twice
 
     # sign txid and commit
-    sig = sk.sign_deterministic(txid)
+    sig = ctx.sk.sign_deterministic(txid)
     msg = "%s sent %s bits to %s\n%s" % ( ctx.address
                                         , amount
                                         , recipient_address
@@ -72,8 +72,9 @@ def get_spendable_inputs(ctx):
     inputs = []
     balances_path = 'data/%s/balance' % ctx.address
     for path in ctx.db.get_list(balances_path):
-        input_data = json.loads(ctx.db[path])
-        inp = Input(ctx.address, entry.name, input_data['amount'])
+        input_data = json.loads(ctx.db.get_blob(path))
+        [_, _, _, txid] = path.split('/')
+        inp = Input(ctx.address, txid, input_data['amount'])
         inputs.append(inp)
     return inputs
 
@@ -96,8 +97,8 @@ parser_balance = subparsers.add_parser('balance', help='Show balance')
 parser_balance.set_defaults(func=balance)
 
 parser_send = subparsers.add_parser('send', help='Send bits')
-parser_send.add_argument('address')
 parser_send.add_argument('amount')
+parser_send.add_argument('address')
 parser_send.set_defaults(func=send)
 
 
