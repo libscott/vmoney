@@ -1,4 +1,6 @@
-import sys
+#!/usr/bin/env bash
+
+import sysgitb
 import hashlib
 from ecdsa import SigningKey
 import verne.api

@@ -1,7 +1,7 @@
 [
     {
         "name": "send",
-        "cmd": "send.py",
+        "cmd": "./send.py",
         "inputs": ["send.py"]
     }
 ]
