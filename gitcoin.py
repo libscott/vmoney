@@ -8,7 +8,7 @@ import hashlib
 import json
 import os.path
 import sys
-import verne.api
+import verne.branch
 
 
 AppContext = collections.namedtuple('AppContext', 'db,sk,address')
@@ -64,29 +64,24 @@ def send(args):
 
 def balance(args):
     ctx = get_ctx(args)
-    spendable = get_spendable_inputs(ctx)
+    inputs = get_spendable_inputs(ctx)
     print "Available balance is: %s bits" % sum(i.amount for i in inputs)
 
 
 def get_spendable_inputs(ctx):
     inputs = []
-    try:
-        balances = ctx.db.tree['data/%s/balance' % ctx.address]
-    except KeyError:
-        return []
-    else:
-        for entry in ctx.db.repo.get(balances.oid):
-            inp = Input(ctx.address, entry.name,
-                        json.loads(db[path])['amount'])
-            inputs.append(inp)
+    balances_path = 'data/%s/balance' % ctx.address
+    for path in ctx.db.get_list(balances_path):
+        input_data = json.loads(ctx.db[path])
+        inp = Input(ctx.address, entry.name, input_data['amount'])
+        inputs.append(inp)
     return inputs
 
 
 def get_ctx(_):
     gitcoinfile = os.path.expanduser('~/.gitcoin')
     # data branch
-    branch_name = 'gitcoin'
-    db = verne.api.db_from_branch_name(branch_name)
+    db = verne.branch.db_from_ref_name('refs/heads/master').branch('gitcoin_is_go', True)
     # address
     sk = ecdsa.SigningKey.from_pem(open(gitcoinfile).read())
     vk = sk.get_verifying_key()
