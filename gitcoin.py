@@ -19,30 +19,34 @@ Input = collections.namedtuple('Input', 'owner,txid,amount')
 
 def send(args):
     ctx = get_ctx(args)
-    amount = int(args.amount)
+    amount = get_amount(args.amount)
     recipient_address = args.address
     # create tx
     inputs = []
     change = -1
+
     for inp in get_spendable_inputs(ctx):
         inputs.append(inp)
         change = sum(i.amount for i in inputs) - amount
         if change >= 0:
             break
 
-    if change <= 0:
+    if change < 0:
         print >>sys.stderr, ("Insufficient funds to send %s" % amount)
         return
 
     input_txids = []
-    sha = hashlib.sha256()
     for inp in inputs:
-        sha.update(inp.txid)
-        del ctx.head['data/%s/balance/%s' % (ctx.address, inp.txid)]
+        input_txids.append(inp.txid)
 
-    txid = sha.hexdigest()
+    txid = hashlib.sha256(''.join(input_txids)).hexdigest()
+    branch_name = 'tx/%s' % txid
+    branch = ctx.head.branch(branch_name, force=1)
+
+    for input_txid in input_txids:
+        del branch['data/%s/balance/%s' % (ctx.address, input_txid)]
+
     deposit_path = 'data/%s/balance/%s' % (recipient_address, txid)
-    branch = ctx.head.branch('gitcoin_is_go')
     branch[deposit_path] = json.dumps({'amount': amount})
 
     if change:
@@ -60,7 +64,14 @@ def send(args):
                                         , base64.b64encode(sig)
                                         )
     branch.commit(msg)
-    print >>sys.stderr, ("tx on branch: %s" % 'gitcoin_is_go')
+    os.system('git merge ' + branch_name)
+
+
+def get_amount(dat):
+    amount = int(dat)
+    if amount < 1:
+        raise ValueError("Amount must be >= 1")
+    return amount
 
 
 def balance(args):
@@ -95,6 +106,17 @@ def get_ctx(args):
     return AppContext(db, sk, address)
 
 
+def log(args):
+    import pdb; pdb.set_trace()
+    1
+
+
+def validate(args):
+    import pdb; pdb.set_trace()
+    1
+
+
+
 parser = argparse.ArgumentParser(description='Verne (toy) money')
 parser.add_argument('-k', '--keyfile', default='~/.gitcoin')
 subparsers = parser.add_subparsers()
@@ -106,6 +128,13 @@ parser_send = subparsers.add_parser('send', help='Send bits')
 parser_send.add_argument('amount')
 parser_send.add_argument('address')
 parser_send.set_defaults(func=send)
+
+parser_validate = subparsers.add_parser('validate', help='Validate given reference')
+parser_validate.add_argument('ref')
+parser_validate.set_defaults(func=validate)
+
+parser_log = subparsers.add_parser('log', help='Show transaction log')
+parser_log.set_defaults(func=log)
 
 
 def main():
