@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 
 import argparse
-import base64
+import base58
 import collections
 import ecdsa
 import hashlib
 import json
 import os.path
 import sys
-import verne.branch
+
+from tree import DataTree
 
 
 AppContext = collections.namedtuple('AppContext', 'head,sk,address')
-
 
 Input = collections.namedtuple('Input', 'owner,txid,amount')
 
@@ -39,7 +39,7 @@ def send(args):
     for inp in inputs:
         input_txids.append(inp.txid)
 
-    txid = hashlib.sha256(''.join(input_txids)).hexdigest()
+    txid = base58.b58encode(hashlib.sha256(''.join(input_txids)).digest())
     branch_name = 'tx/%s' % txid
     branch = ctx.head.branch(branch_name, force=1)
 
@@ -58,11 +58,11 @@ def send(args):
 
     # sign txid and commit
     sig = ctx.sk.sign_deterministic(txid)
-    msg = "%s sent %s bits to %s\n%s" % ( ctx.address
-                                        , amount
-                                        , recipient_address
-                                        , base64.b64encode(sig)
-                                        )
+    msg = "%s sent %s bits to %s\n\n%s" % ( ctx.address
+                                          , amount
+                                          , recipient_address
+                                          , base58.b58encode(sig)
+                                          )
     branch.commit(msg)
     os.system('git merge ' + branch_name)
 
@@ -92,8 +92,8 @@ def get_spendable_inputs(ctx):
 
 
 def get_ctx(args):
-    # data branch
-    db = verne.branch.DataBranch.discover()
+    # data tree
+    db = DataTree.discover()
     # address
     keyfile = os.path.expanduser(args.keyfile)
     if not os.path.exists(keyfile):
@@ -102,7 +102,8 @@ def get_ctx(args):
         open(keyfile, 'w').write(sk.to_pem())
     sk = ecdsa.SigningKey.from_pem(open(keyfile).read())
     vk = sk.get_verifying_key()
-    address = hashlib.sha256(vk.to_der()).hexdigest()
+    address_sha = hashlib.sha256(vk.to_der()).digest()
+    address = 'V' + base58.b58encode(address_sha)[:10]
     return AppContext(db, sk, address)
 
 
