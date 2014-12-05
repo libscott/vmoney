@@ -7,6 +7,7 @@ Setup
 -----
 
 On Debian based linux:
+
     sudo apt-get install libssl-dev libffi-dev libgit2-dev python-pip python-virtualenv
 
 Then:
