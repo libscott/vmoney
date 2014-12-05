@@ -11,7 +11,7 @@ import sys
 import verne.branch
 
 
-AppContext = collections.namedtuple('AppContext', 'db,sk,address')
+AppContext = collections.namedtuple('AppContext', 'head,sk,address')
 
 
 Input = collections.namedtuple('Input', 'owner,txid,amount')
@@ -34,20 +34,20 @@ def send(args):
         print >>sys.stderr, ("Insufficient funds to send %s" % amount)
         return
 
-    # tx id is a hash of the sorted input hashes.
     input_txids = []
     sha = hashlib.sha256()
     for inp in inputs:
         sha.update(inp.txid)
-        del ctx.db['data/%s/balance/%s' % (ctx.address, inp.txid)]
+        del ctx.head['data/%s/balance/%s' % (ctx.address, inp.txid)]
 
     txid = sha.hexdigest()
     deposit_path = 'data/%s/balance/%s' % (recipient_address, txid)
-    ctx.db[deposit_path] = json.dumps({'amount': amount})
+    branch = ctx.head.branch('gitcoin_is_go')
+    branch[deposit_path] = json.dumps({'amount': amount})
 
     if change:
         change_path = 'data/%s/balance/%s' % (ctx.address, txid)
-        ctx.db[change_path] = json.dumps({'amount': change})
+        branch[change_path] = json.dumps({'amount': change})
 
     # TODO: update last spent which will conflict if we try to spend the same
     # outputs twice
@@ -59,38 +59,44 @@ def send(args):
                                         , recipient_address
                                         , base64.b64encode(sig)
                                         )
-    ctx.db.commit(msg)
+    branch.commit(msg)
+    print >>sys.stderr, ("tx on branch: %s" % 'gitcoin_is_go')
 
 
 def balance(args):
     ctx = get_ctx(args)
     inputs = get_spendable_inputs(ctx)
-    print "Available balance is: %s bits" % sum(i.amount for i in inputs)
+    print "%s: %s bits" % (ctx.address, sum(i.amount for i in inputs))
 
 
 def get_spendable_inputs(ctx):
     inputs = []
     balances_path = 'data/%s/balance' % ctx.address
-    for path in ctx.db.get_list(balances_path):
-        input_data = json.loads(ctx.db.get_blob(path))
+    for path in ctx.head.get_list(balances_path):
+        input_data = json.loads(ctx.head.get_blob(path))
         [_, _, _, txid] = path.split('/')
         inp = Input(ctx.address, txid, input_data['amount'])
         inputs.append(inp)
     return inputs
 
 
-def get_ctx(_):
-    gitcoinfile = os.path.expanduser('~/.gitcoin')
+def get_ctx(args):
     # data branch
-    db = verne.branch.db_from_ref_name('refs/heads/master').branch('gitcoin_is_go', True)
+    db = verne.branch.DataBranch.discover()
     # address
-    sk = ecdsa.SigningKey.from_pem(open(gitcoinfile).read())
+    keyfile = os.path.expanduser(args.keyfile)
+    if not os.path.exists(keyfile):
+        print >>sys.stderr, ("Keyfile at %s does not exist, generating new key" % keyfile)
+        sk = ecdsa.SigningKey.generate()
+        open(keyfile, 'w').write(sk.to_pem())
+    sk = ecdsa.SigningKey.from_pem(open(keyfile).read())
     vk = sk.get_verifying_key()
     address = hashlib.sha256(vk.to_der()).hexdigest()
     return AppContext(db, sk, address)
 
 
-parser = argparse.ArgumentParser(description='Verne toy cryptocurrency')
+parser = argparse.ArgumentParser(description='Verne (toy) money')
+parser.add_argument('-k', '--keyfile', default='~/.gitcoin')
 subparsers = parser.add_subparsers()
 
 parser_balance = subparsers.add_parser('balance', help='Show balance')
