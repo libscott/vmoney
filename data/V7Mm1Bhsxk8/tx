@@ -1,7 +1,7 @@
 {
-    "amount": 1, 
+    "amount": 2, 
     "pubkey": "24HVuR5GhLia7aZgEjNQouM11tKQ3pM27csvm1TshGpsPqDcpDU4Sz5VE8c6ryeuXJQqwXssmofAzKwdrRrGaeJ6ujZFgGAnQGFcgkZ", 
-    "sig": "32d2kd1ZRTXgYc5ChoGAhmSqgT5y79KRjZ3daUuWXUck8dRHjjAkZPxh4FzqD92tgc", 
-    "to": "someone", 
-    "txid": "691GZAC9S24xzpzGJFgsqHxEouMQS1MSaQQSL2rfNnyX"
+    "sig": "Yr6kseEKQoR5oWt9vknjfKGMFPhKmht6z3hM5ur5CX51vtBmkff5MSrzWXB1m62MV", 
+    "to": "VC9Gnauh92x", 
+    "txid": "CTMKr9JZeQvdrKzXhnvJ1YWLCqF3er1LVQr1MRV5XXKr"
 }
