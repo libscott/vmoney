@@ -117,10 +117,11 @@ def dict_diff(dict1, dict2):
     Combine a dictionary, discarding entries that are the same
     in both left and right
     """
+    tooid = lambda o: o.oid if o else None
     for key in set(dict1.keys() + dict2.keys()):
         item1 = dict1.get(key)
         item2 = dict2.get(key)
-        if item1 != item2:
+        if tooid(item1) != tooid(item2):
             yield (key, (item1, item2))
 
 

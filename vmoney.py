@@ -25,9 +25,11 @@ def send(args):
     txid, mods = create_tx(ctx.address, recip, amount, ctx.head.tree)
 
     sig = ctx.sk.sign_deterministic(txid)
+    vk = ctx.sk.get_verifying_key()
 
     tx = json.dumps({
         'to': recip,
+        'pubkey': base58.b58encode(vk.to_der()),
         'sig': base58.b58encode(sig),
         'txid': txid,
         'amount': amount,
@@ -48,7 +50,7 @@ def send(args):
     os.system('git merge ' + branch_name)
 
 
-class ValidationError(Exception):
+class ValidationError(AssertionError):
     pass
 
 
@@ -95,6 +97,7 @@ def create_tx(sender, recip, amount, tree, mint=False):
 
 
 def validate_tx(parent, commit):
+    """ Validate that a transaction is correct by replaying it against parent tree """
     # Get changes
     data1 = parent.tree.subtree_or_empty('data')
     data2 = commit.tree.subtree_or_empty('data')
@@ -112,17 +115,21 @@ def validate_tx(parent, commit):
     txdata = commit.tree.get(txfile)
     tx = json.loads(txdata)
     # Make sure tx looks ok ish
-    """ here's where we would validate the types of the data of
+    """ here's where we would validate the structure of
         the tx, if we were making a real cryptocurrency """
-    # Apply transaction to parent
-    _, mods = create_tx(sender, tx['to'], tx['amount'], parent.tree)
+    txid, mods = create_tx(sender, tx['to'], tx['amount'], parent.tree)
+    # Verify signature
+    pubkey = base58.b58decode(tx['pubkey'])
+    sig = base58.b58decode(tx['sig'])
+    ecdsa.VerifyingKey.from_der(pubkey).verify(sig, txid)
+    # Reconstruct changes to tree (intermediary objects bloat object store)
     mods.append((txfile, txdata))
-
+    tree = parent.tree
     for k, v in mods:
         tree = tree.set(k, v)
-
     assert tree == commit.tree, "Tree reconstruction failed"
-
+    tx['from'] = sender
+    return tx
 
 
 def get_txid(input_txids):
@@ -169,23 +176,16 @@ def get_ctx(args):
     return AppContext(db, sk, address)
 
 
-# In order to avoid all the fuss and prevent double spending, each commit
-# should write a tx file with a simple data structure that can be easily
-# validated. This data structure can then be applied to the parent tree,
-# and the transaction will be valid if the result tree's OID is the same as the
-# commit tree's OID. Weeee. <3 git.
-
-
-
 def txlog(args):
     ctx = get_ctx(args)
     commit = None
     for parent in ctx.head.log():
         if commit:
             try:
-                print validate_tx(parent, commit)
+                tx = validate_tx(parent, commit)
+                print tx
             except AssertionError as e:
-                print e
+                print repr(e)
         commit = parent
 
 
