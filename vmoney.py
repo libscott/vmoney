@@ -63,7 +63,7 @@ def send(args):
         'txid': txid,
         'amount': amount,
     })
-    branch['data/%s/tx'] = tx
+    branch['data/%s/tx' % ctx.address] = tx
 
     msg = "%s sent %s bits to %s" % ( ctx.address
                                     , amount
