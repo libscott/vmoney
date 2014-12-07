@@ -1,6 +1,4 @@
-import os.path
 import pygit2
-import sys
 
 
 class Commit(object):
@@ -97,6 +95,9 @@ class Tree(object):
 
     def __iter__(self):
         return iter(self._tree)
+
+    def __eq__(self, other):
+        return self._tree.oid == other._tree.oid
 
 
 def flatten_tree(tree, prefix=()):

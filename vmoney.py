@@ -6,7 +6,6 @@ import collections
 import ecdsa
 import hashlib
 import json
-import pygit2
 import os.path
 import sys
 
@@ -21,56 +20,109 @@ Input = collections.namedtuple('Input', 'owner,txid,amount')
 def send(args):
     ctx = get_ctx(args)
     amount = get_amount(args.amount)
-    recipient_address = args.address
-    # create tx
+    recip = args.address
+
+    txid, mods = create_tx(ctx.address, recip, amount, ctx.head.tree)
+
+    sig = ctx.sk.sign_deterministic(txid)
+
+    tx = json.dumps({
+        'to': recip,
+        'sig': base58.b58encode(sig),
+        'txid': txid,
+        'amount': amount,
+    }, sort_keys=True, indent=4)
+    mods.append(('data/%s/tx' % ctx.address, tx))
+
+    branch_name = 'tx/%s' % txid
+    branch = ctx.head.branch(branch_name, force=True)
+
+    for k, v in mods:
+        branch[k] = v
+
+    msg = "%s sent %s bits to %s" % ( ctx.address
+                                    , amount
+                                    , recip
+                                    )
+    branch.commit(msg)
+    os.system('git merge ' + branch_name)
+
+
+class ValidationError(Exception):
+    pass
+
+
+class InsufficientFunds(ValidationError):
+    pass
+
+
+def create_tx(sender, recip, amount, tree, mint=False):
+    """ Get txid and list of modifications to make to a tree. """
     inputs = []
     change = -1
 
-    for inp in get_spendable_inputs(ctx.address, ctx.head.tree):
-        inputs.append(inp)
-        change = sum(i.amount for i in inputs) - amount
-        if change >= 0:
-            break
+    if mint:
+        change = 0
+    else:
+        for inp in get_spendable_inputs(sender, tree):
+            inputs.append(inp)
+            change = sum(i.amount for i in inputs) - amount
+            if change >= 0:
+                break
 
     if change < 0:
-        print >>sys.stderr, ("Insufficient funds to send %s" % amount)
-        return
+        raise InsufficientFunds()
 
     input_txids = []
     for inp in inputs:
         input_txids.append(inp.txid)
 
     txid = get_txid(input_txids)
-    branch_name = 'tx/%s' % txid
-    branch = ctx.head.branch(branch_name, force=1)
+
+    mods = []
 
     for input_txid in input_txids:
-        del branch['data/%s/balance/%s' % (ctx.address, input_txid)]
+        mods.append(('data/%s/balance/%s' % (sender, input_txid), None))
 
-    deposit_path = 'data/%s/balance/%s' % (recipient_address, txid)
-    branch[deposit_path] = json.dumps({'amount': amount})
+    deposit_path = 'data/%s/balance/%s' % (recip, txid)
+    mods.append((deposit_path, json.dumps({'amount': amount})))
 
     if change:
-        change_path = 'data/%s/balance/%s' % (ctx.address, txid)
-        branch[change_path] = json.dumps({'amount': change})
+        change_path = 'data/%s/balance/%s' % (sender, txid)
+        mods.append((change_path, json.dumps({'amount': change})))
 
-    # sign txid and commit
-    sig = ctx.sk.sign_deterministic(txid)
+    return txid, mods
 
-    tx = json.dumps({
-        'to': recipient_address,
-        'sig': base58.b58encode(sig),
-        'txid': txid,
-        'amount': amount,
-    })
-    branch['data/%s/tx' % ctx.address] = tx
 
-    msg = "%s sent %s bits to %s" % ( ctx.address
-                                    , amount
-                                    , recipient_address
-                                    )
-    branch.commit(msg)
-    os.system('git merge ' + branch_name)
+def validate_tx(parent, commit):
+    # Get changes
+    data1 = parent.tree.subtree_or_empty('data')
+    data2 = commit.tree.subtree_or_empty('data')
+    changes = list(tree_changes(data1, data2))
+    if not changes:
+        return None
+    # find transaction
+    sender = None
+    for key, change in changes:
+        if len(key) == 2 and key[1] == 'tx':
+            sender = key[0]
+            break
+    assert sender, "Illegal transaction; no tx file"
+    txfile = 'data/%s/tx' % sender
+    txdata = commit.tree.get(txfile)
+    tx = json.loads(txdata)
+    # Make sure tx looks ok ish
+    """ here's where we would validate the types of the data of
+        the tx, if we were making a real cryptocurrency """
+    # Apply transaction to parent
+    _, mods = create_tx(sender, tx['to'], tx['amount'], parent.tree)
+    mods.append((txfile, txdata))
+
+    for k, v in mods:
+        tree = tree.set(k, v)
+
+    assert tree == commit.tree, "Tree reconstruction failed"
+
 
 
 def get_txid(input_txids):
@@ -94,8 +146,9 @@ def balance(args):
 def get_spendable_inputs(address, tree):
     balances_path = 'data/%s/balance' % address
     tree = tree.subtree_or_empty(balances_path)
-    for entry in tree:
-        txid = entry.name
+    names = [entry.name for entry in tree]
+    names.sort()
+    for txid in names:
         input_data = json.loads(tree.get(txid))
         yield Input(address, txid, input_data['amount'])
 
@@ -116,69 +169,6 @@ def get_ctx(args):
     return AppContext(db, sk, address)
 
 
-def parse_tx(commit, parent):
-    data1 = parent.tree.subtree_or_empty('data')
-    data2 = commit.tree.subtree_or_empty('data')
-    changes = tree_changes(data1, data2)
-
-    if not changes:
-        return None
-
-    sender = None
-    recipient = None
-    amount = 0
-    inputs = []
-    outputs = []
-    change = -1
-
-    for key, (old, new) in changes:
-        assert len(key) == 3, ("Unrecognized key length %s" % len(key))
-        (addr, cat, txid) = key
-        assert cat == 'balance', ("Unrecognized category: %s)" % key)
-        assert (not (old and new)), ("File modified: %s" % key)
-        if old:
-            inputs.append((key, json.loads(data1.get('/'.join(key)))))
-        else:
-            outputs.append((key, json.loads(data2.get('/'.join(key)))))
-
-    insize  = sum(bal['amount'] for _, bal in inputs)
-    outsize = sum(bal['amount'] for _, bal in outputs)
-
-    assert insize == outsize, ("Not zero sum: %s" % (outsize - insize))
-    assert insize != 0, "Zero size"
-
-    for (key, bal) in (inputs + outputs):
-        assert bal['amount'] >= 0, ("Illegal balance in %s: %s", (key, bal))
-
-    txids = set(k[2] for k, _ in outputs)
-    assert len(txids) == 1, "Multiple output txids: %s" % txids
-    txid = list(txids)[0]
-
-    input_txids = [k[2] for k, _ in inputs]
-    assert len(set(input_txids)) == len(input_txids), "Input txids not unique"
-
-    good = get_txid(input_txids)
-    assert txid == good, ("Bad output txid for inputs: %s, %s" % (txid, good))
-
-    senders = set(k[0] for k, _ in inputs)
-    assert len(senders) == 1, "Multiple senders: %s" % senders
-    sender = list(senders)[0]
-
-    for (to, _, _), bal in outputs:
-        if to == sender:
-            assert change == -1, "Multiple change outputs"
-            change = bal['amount']
-        else:
-            if recipient:
-                assert recipient == to, "Multiple recipients"
-            else:
-                recipient = to
-            amount += bal['amount']
-
-    return (txid, sender, recipient, amount)
-
-
-
 # In order to avoid all the fuss and prevent double spending, each commit
 # should write a tx file with a simple data structure that can be easily
 # validated. This data structure can then be applied to the parent tree,
@@ -187,19 +177,16 @@ def parse_tx(commit, parent):
 
 
 
-
-
-
 def txlog(args):
     ctx = get_ctx(args)
-    parent = None
-    for commit in ctx.head.log():
-        if parent:
+    commit = None
+    for parent in ctx.head.log():
+        if commit:
             try:
-                print parse_tx(parent, commit)
+                print validate_tx(parent, commit)
             except AssertionError as e:
                 print e
-        parent = commit
+        commit = parent
 
 
 def validate(args):
@@ -215,6 +202,7 @@ parser_balance = subparsers.add_parser('balance', help='Show balance')
 parser_balance.set_defaults(func=balance)
 
 parser_send = subparsers.add_parser('send', help='Send bits')
+parser_send.add_argument('--mint', action='store_true', help='create money')
 parser_send.add_argument('amount')
 parser_send.add_argument('address')
 parser_send.set_defaults(func=send)
