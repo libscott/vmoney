@@ -18,7 +18,7 @@ class Commit(object):
 
     def branch(self, name, force=False):
         branch = self.repo.create_branch(name, self._commit, force)
-        return Branch(branch.name, self.repo)
+        return Branch(self.repo, branch.name)
 
 
 class Tree(object):
@@ -163,12 +163,12 @@ class Branch(object):
     def __delitem__(self, path):
         self[path] = None
 
-    def commit(self, msg):
+    def commit(self, msg, author=alice, committer=cecil):
         ref = self.repo.lookup_reference(self.ref_name)
         parent = ref.peel().id
         self.repo.create_commit( self.ref_name
-                               , self.author
-                               , self.committer
+                               , author
+                               , committer
                                , msg
                                , self.tree._tree.oid
                                , [parent]
