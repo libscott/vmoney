@@ -183,7 +183,7 @@ def txlog(args):
         if commit:
             try:
                 tx = validate_tx(parent, commit)
-                print tx
+                print commit.oid, tx
             except AssertionError as e:
                 print repr(e)
         commit = parent

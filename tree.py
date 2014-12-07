@@ -4,6 +4,7 @@ import pygit2
 class Commit(object):
     def __init__(self, repo, pygit2_commit):
         self._commit = pygit2_commit
+        self.oid = pygit2_commit.oid
         self.repo = repo
 
     @property
