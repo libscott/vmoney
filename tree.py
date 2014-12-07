@@ -3,81 +3,162 @@ import pygit2
 import sys
 
 
-class DataTree(object):
+class Commit(object):
+    def __init__(self, repo, pygit2_commit):
+        self._commit = pygit2_commit
+        self.repo = repo
 
+    @property
+    def tree(self):
+        return Tree(self.repo, self._commit.tree)
+
+    def log(self):
+        log_ = self.repo.walk(self._commit.oid, pygit2.GIT_SORT_TIME)
+        return (Commit(self.repo, c) for c in log_)
+
+    def branch(self, name, force=False):
+        branch = self.repo.create_branch(name, self._commit, force)
+        return Branch(branch.name, self.repo)
+
+
+class Tree(object):
+    def __init__(self, repo, pygit2_tree):
+        self._tree = pygit2_tree
+        self.repo = repo
+
+    _ERROR = object()
+
+    def get(self, path, default=_ERROR):
+        if path in self._tree:
+            entry = self._tree[path]
+            if entry.filemode == pygit2.GIT_FILEMODE_BLOB:
+                blob = self.repo.get(entry.id)
+                return blob.read_raw()
+        if default is self._ERROR:
+            raise KeyError(path)
+        return default
+
+    def subtree(self, path):
+        entry = self._tree[path]
+        if entry.filemode == pygit2.GIT_FILEMODE_TREE:
+            tree = self.repo.get(entry.id)
+            return Tree(self.repo, tree)
+        raise KeyError(path)
+
+    def subtree_or_empty(self, path):
+        try:
+            return self.subtree(path)
+        except KeyError:
+            empty = self.repo.TreeBuilder()
+            tree = self.repo.get(empty.write())
+            return Tree(self.repo, tree)
+
+    def set(self, path, data):
+        """
+        Return a new tree inheriting from this tree, setting or updating
+        a given path.
+        """
+        parts = path.split('/')
+        basename = parts.pop()
+
+        # The first builder is the bottom tree that references our given
+        # leaf node.
+        builder = self._get_tree_builder('/'.join(parts))
+        if data == None:
+            builder.remove(basename)
+        else:
+            blob_id = self.repo.create_blob(data)
+            builder.insert(basename, blob_id, pygit2.GIT_FILEMODE_BLOB)
+
+        # Now we replace all the parent trees to point to our new tree
+        # until we hit the root.
+        while parts:
+            name = parts.pop()
+            child_oid = builder.write()
+            builder = self._get_tree_builder('/'.join(parts))
+            builder.insert(name, child_oid, pygit2.GIT_FILEMODE_TREE)
+
+        tree = self.repo.get(builder.write())
+        return Tree(self.repo, tree)
+
+    def __contains__(self, path):
+        return path in self._tree
+
+    def _get_tree_builder(self, path):
+        oid = None
+        if path:
+            if path in self._tree:
+                oid = self._tree[path].oid
+            else:
+                return self.repo.TreeBuilder()
+        else:
+            oid = self._tree.oid
+        return self.repo.TreeBuilder(oid)
+
+    def __iter__(self):
+        return iter(self._tree)
+
+
+def flatten_tree(tree, prefix=()):
+    """ Flatten a tree into name -> entry pairs """
+    for entry in tree._tree:
+        name = prefix + (entry.name,)
+        if entry.filemode == pygit2.GIT_FILEMODE_TREE:
+            subtree = tree.subtree(entry.name)
+            for item in flatten_tree(subtree, name):
+                yield item
+        else:
+            yield (name, entry)
+
+
+def dict_diff(dict1, dict2):
+    """
+    Combine a dictionary, discarding entries that are the same
+    in both left and right
+    """
+    for key in set(dict1.keys() + dict2.keys()):
+        item1 = dict1.get(key)
+        item2 = dict2.get(key)
+        if item1 != item2:
+            yield (key, (item1, item2))
+
+
+def tree_changes(tree1, tree2):
+    """ Iterate changes between 2 trees """
+    return dict_diff(dict(flatten_tree(tree1)), dict(flatten_tree(tree2)))
+
+
+def discover_head():
+    repodir = pygit2.discover_repository('.')
+    repo = pygit2.Repository(repodir)
+    return Commit(repo, repo.head.peel())
+
+
+class Branch(object):
+    """ Mutable branch object """
     alice = pygit2.Signature('Alice Author', 'alice@authors.tld')
     cecil = pygit2.Signature('Cecil Committer', 'cecil@committers.tld')
 
-    def __init__(self, branch_name, repo, author=alice, committer=cecil):
+    def __init__(self, repo, branch_name):
         self.ref_name = branch_name
         self.repo = repo
-        self.author = author
-        self.committer = committer
-        self.tree = repo.lookup_reference(branch_name).peel().tree
+        _tree = repo.lookup_reference(self.ref_name).peel().tree
+        self.tree = Tree(repo, _tree)
 
     @classmethod
     def discover(cls):
         repodir = pygit2.discover_repository('.')
         repo = pygit2.Repository(repodir)
-        return cls(repo.head.name, repo)
-
-    def branch(self, name, force=False):
-        branch = self.repo.create_branch(name, self.repo.head.peel(), force)
-        return DataTree(branch.name, self.repo)
+        return cls(repo, repo.head.name)
 
     def __contains__(self, path):
         return path in self.tree
 
-    def get_blob(self, path):
-        if path in self:
-            input_ = self.tree[path]
-            blob = self.repo.get(input_.id)
-            return blob.read_raw()
-        return ''
-
-    def get_list(self, path):
-        if path in self:
-            parent = self.tree[path]
-            entries = self.repo.get(parent.oid)
-            return [os.path.join(path, e.name) for e in entries]
-        return []
-
-    def __getitem__(self, item):
-        if type(item) == int:
-            return super(DataTree, self).__getitem__(item)
-        else:
-            return self.get_blob(item)
+    def __getitem__(self, name):
+        return self.tree[name]
 
     def __setitem__(self, path, value):
-        path = path.split('/')
-
-        def get_tree_builder(path):
-            oid = None
-            if path:
-                if path in self.tree:
-                    oid = self.tree[path].oid
-                else:
-                    return self.repo.TreeBuilder()
-            else:
-                oid = self.tree.oid
-            return self.repo.TreeBuilder(oid)
-
-        basename = path.pop()
-
-        builder = get_tree_builder('/'.join(path))
-        if value != None:
-            blob_id = self.repo.create_blob(value)
-            builder.insert(basename, blob_id, pygit2.GIT_FILEMODE_BLOB)
-        else:
-            builder.remove(basename)
-
-        while path:
-            name = path.pop()
-            child_oid = builder.write()
-            builder = get_tree_builder('/'.join(path))
-            builder.insert(name, child_oid, pygit2.GIT_FILEMODE_TREE)
-
-        self.tree = self.repo.get(builder.write())
+        self.tree = self.tree.set(path, value)
 
     def __delitem__(self, path):
         self[path] = None
@@ -89,6 +170,6 @@ class DataTree(object):
                                , self.author
                                , self.committer
                                , msg
-                               , self.tree.oid
+                               , self.tree._tree.oid
                                , [parent]
                                )

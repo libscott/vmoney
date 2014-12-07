@@ -6,10 +6,11 @@ import collections
 import ecdsa
 import hashlib
 import json
+import pygit2
 import os.path
 import sys
 
-from tree import DataTree
+from tree import tree_changes, discover_head
 
 
 AppContext = collections.namedtuple('AppContext', 'head,sk,address')
@@ -25,7 +26,7 @@ def send(args):
     inputs = []
     change = -1
 
-    for inp in get_spendable_inputs(ctx):
+    for inp in get_spendable_inputs(ctx.address, ctx.head.tree):
         inputs.append(inp)
         change = sum(i.amount for i in inputs) - amount
         if change >= 0:
@@ -39,7 +40,7 @@ def send(args):
     for inp in inputs:
         input_txids.append(inp.txid)
 
-    txid = base58.b58encode(hashlib.sha256(''.join(input_txids)).digest())
+    txid = get_txid(input_txids)
     branch_name = 'tx/%s' % txid
     branch = ctx.head.branch(branch_name, force=1)
 
@@ -53,18 +54,28 @@ def send(args):
         change_path = 'data/%s/balance/%s' % (ctx.address, txid)
         branch[change_path] = json.dumps({'amount': change})
 
-    # TODO: update last spent which will conflict if we try to spend the same
-    # outputs twice
-
     # sign txid and commit
     sig = ctx.sk.sign_deterministic(txid)
-    msg = "%s sent %s bits to %s\n\n%s" % ( ctx.address
-                                          , amount
-                                          , recipient_address
-                                          , base58.b58encode(sig)
-                                          )
+
+    tx = json.dumps({
+        'to': recipient_address,
+        'sig': base58.b58encode(sig),
+        'txid': txid,
+        'amount': amount,
+    })
+    branch['data/%s/tx'] = tx
+
+    msg = "%s sent %s bits to %s" % ( ctx.address
+                                    , amount
+                                    , recipient_address
+                                    )
     branch.commit(msg)
     os.system('git merge ' + branch_name)
+
+
+def get_txid(input_txids):
+    tohash = ''.join(sorted(input_txids))
+    return base58.b58encode(hashlib.sha256(tohash).digest())
 
 
 def get_amount(dat):
@@ -76,24 +87,22 @@ def get_amount(dat):
 
 def balance(args):
     ctx = get_ctx(args)
-    inputs = get_spendable_inputs(ctx)
+    inputs = get_spendable_inputs(ctx.address, ctx.head.tree)
     print "%s: %s bits" % (ctx.address, sum(i.amount for i in inputs))
 
 
-def get_spendable_inputs(ctx):
-    inputs = []
-    balances_path = 'data/%s/balance' % ctx.address
-    for path in ctx.head.get_list(balances_path):
-        input_data = json.loads(ctx.head.get_blob(path))
-        [_, _, _, txid] = path.split('/')
-        inp = Input(ctx.address, txid, input_data['amount'])
-        inputs.append(inp)
-    return inputs
+def get_spendable_inputs(address, tree):
+    balances_path = 'data/%s/balance' % address
+    tree = tree.subtree_or_empty(balances_path)
+    for entry in tree:
+        txid = entry.name
+        input_data = json.loads(tree.get(txid))
+        yield Input(address, txid, input_data['amount'])
 
 
 def get_ctx(args):
     # data tree
-    db = DataTree.discover()
+    db = discover_head()
     # address
     keyfile = os.path.expanduser(args.keyfile)
     if not os.path.exists(keyfile):
@@ -107,9 +116,90 @@ def get_ctx(args):
     return AppContext(db, sk, address)
 
 
-def log(args):
-    import pdb; pdb.set_trace()
-    1
+def parse_tx(commit, parent):
+    data1 = parent.tree.subtree_or_empty('data')
+    data2 = commit.tree.subtree_or_empty('data')
+    changes = tree_changes(data1, data2)
+
+    if not changes:
+        return None
+
+    sender = None
+    recipient = None
+    amount = 0
+    inputs = []
+    outputs = []
+    change = -1
+
+    for key, (old, new) in changes:
+        assert len(key) == 3, ("Unrecognized key length %s" % len(key))
+        (addr, cat, txid) = key
+        assert cat == 'balance', ("Unrecognized category: %s)" % key)
+        assert (not (old and new)), ("File modified: %s" % key)
+        if old:
+            inputs.append((key, json.loads(data1.get('/'.join(key)))))
+        else:
+            outputs.append((key, json.loads(data2.get('/'.join(key)))))
+
+    insize  = sum(bal['amount'] for _, bal in inputs)
+    outsize = sum(bal['amount'] for _, bal in outputs)
+
+    assert insize == outsize, ("Not zero sum: %s" % (outsize - insize))
+    assert insize != 0, "Zero size"
+
+    for (key, bal) in (inputs + outputs):
+        assert bal['amount'] >= 0, ("Illegal balance in %s: %s", (key, bal))
+
+    txids = set(k[2] for k, _ in outputs)
+    assert len(txids) == 1, "Multiple output txids: %s" % txids
+    txid = list(txids)[0]
+
+    input_txids = [k[2] for k, _ in inputs]
+    assert len(set(input_txids)) == len(input_txids), "Input txids not unique"
+
+    good = get_txid(input_txids)
+    assert txid == good, ("Bad output txid for inputs: %s, %s" % (txid, good))
+
+    senders = set(k[0] for k, _ in inputs)
+    assert len(senders) == 1, "Multiple senders: %s" % senders
+    sender = list(senders)[0]
+
+    for (to, _, _), bal in outputs:
+        if to == sender:
+            assert change == -1, "Multiple change outputs"
+            change = bal['amount']
+        else:
+            if recipient:
+                assert recipient == to, "Multiple recipients"
+            else:
+                recipient = to
+            amount += bal['amount']
+
+    return (txid, sender, recipient, amount)
+
+
+
+# In order to avoid all the fuss and prevent double spending, each commit
+# should write a tx file with a simple data structure that can be easily
+# validated. This data structure can then be applied to the parent tree,
+# and the transaction will be valid if the result tree's OID is the same as the
+# commit tree's OID. Weeee. <3 git.
+
+
+
+
+
+
+def txlog(args):
+    ctx = get_ctx(args)
+    parent = None
+    for commit in ctx.head.log():
+        if parent:
+            try:
+                print parse_tx(parent, commit)
+            except AssertionError as e:
+                print e
+        parent = commit
 
 
 def validate(args):
@@ -117,9 +207,8 @@ def validate(args):
     1
 
 
-
 parser = argparse.ArgumentParser(description='Verne (toy) money')
-parser.add_argument('-k', '--keyfile', default='~/.gitcoin')
+parser.add_argument('-k', '--keyfile', default='~/.vmoney')
 subparsers = parser.add_subparsers()
 
 parser_balance = subparsers.add_parser('balance', help='Show balance')
@@ -134,8 +223,8 @@ parser_validate = subparsers.add_parser('validate', help='Validate given referen
 parser_validate.add_argument('ref')
 parser_validate.set_defaults(func=validate)
 
-parser_log = subparsers.add_parser('log', help='Show transaction log')
-parser_log.set_defaults(func=log)
+parser_log = subparsers.add_parser('txlog', help='Show transaction log')
+parser_log.set_defaults(func=txlog)
 
 
 def main():
