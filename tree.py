@@ -24,6 +24,7 @@ class Tree(object):
     def __init__(self, repo, pygit2_tree):
         self._tree = pygit2_tree
         self.repo = repo
+        self.oid = pygit2_tree.oid
 
     _ERROR = object()
 

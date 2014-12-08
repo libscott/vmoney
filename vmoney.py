@@ -22,7 +22,7 @@ def send(args):
     amount = get_amount(args.amount)
     recip = args.address
 
-    txid, mods = create_tx(ctx.address, recip, amount, ctx.head.tree)
+    txid, mods = create_tx(ctx.address, recip, amount, ctx.head.tree, args.mint)
 
     sig = ctx.sk.sign_deterministic(txid)
     vk = ctx.sk.get_verifying_key()
@@ -33,6 +33,7 @@ def send(args):
         'sig': base58.b58encode(sig),
         'txid': txid,
         'amount': amount,
+        'mint': args.mint
     }, sort_keys=True, indent=4)
     mods.append(('data/%s/tx' % ctx.address, tx))
 
@@ -79,7 +80,8 @@ def create_tx(sender, recip, amount, tree, mint=False):
     for inp in inputs:
         input_txids.append(inp.txid)
 
-    txid = get_txid(input_txids)
+    tohash = ''.join([str(tree.oid), recip, str(amount)] + sorted(input_txids))
+    txid = base58.b58encode(hashlib.sha256(tohash).digest())
 
     mods = []
 
@@ -117,11 +119,13 @@ def validate_tx(parent, commit):
     # Make sure tx looks ok ish
     """ here's where we would validate the structure of
         the tx, if we were making a real cryptocurrency """
-    txid, mods = create_tx(sender, tx['to'], tx['amount'], parent.tree)
-    # Verify signature
+    txid, mods = create_tx(sender, tx['to'], tx['amount'], parent.tree, tx['mint'])
+    # Verify ownership
     pubkey = base58.b58decode(tx['pubkey'])
+    vk = ecdsa.VerifyingKey.from_der(pubkey)
+    assert make_address(vk) == sender, "Trying to spend someone else's outputs"
     sig = base58.b58decode(tx['sig'])
-    ecdsa.VerifyingKey.from_der(pubkey).verify(sig, txid)
+    vk.verify(sig, txid)
     # Reconstruct changes to tree (intermediary objects bloat object store)
     mods.append((txfile, txdata))
     tree = parent.tree
@@ -132,15 +136,9 @@ def validate_tx(parent, commit):
     return tx
 
 
-def get_txid(input_txids):
-    tohash = ''.join(sorted(input_txids))
-    return base58.b58encode(hashlib.sha256(tohash).digest())
-
-
 def get_amount(dat):
     amount = int(dat)
-    if amount < 1:
-        raise ValueError("Amount must be >= 1")
+    assert amount > 0, "Amount must be > 0"
     return amount
 
 
@@ -160,6 +158,11 @@ def get_spendable_inputs(address, tree):
         yield Input(address, txid, input_data['amount'])
 
 
+def make_address(vk):
+    address_sha = hashlib.sha256(vk.to_der()).digest()
+    return 'V' + base58.b58encode(address_sha)[:10]
+
+
 def get_ctx(args):
     # data tree
     db = discover_head()
@@ -171,9 +174,7 @@ def get_ctx(args):
         open(keyfile, 'w').write(sk.to_pem())
     sk = ecdsa.SigningKey.from_pem(open(keyfile).read())
     vk = sk.get_verifying_key()
-    address_sha = hashlib.sha256(vk.to_der()).digest()
-    address = 'V' + base58.b58encode(address_sha)[:10]
-    return AppContext(db, sk, address)
+    return AppContext(db, sk, make_address(vk))
 
 
 def txlog(args):
@@ -183,7 +184,7 @@ def txlog(args):
         if commit:
             try:
                 tx = validate_tx(parent, commit)
-                print commit.oid, tx
+                print tx
             except AssertionError as e:
                 print repr(e)
         commit = parent
