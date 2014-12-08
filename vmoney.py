@@ -73,7 +73,7 @@ def create_tx(sender, recip, amount, tree, mint=False):
             if change >= 0:
                 break
 
-    if change < 0:
+    if change == -1:
         raise InsufficientFunds()
 
     input_txids = []
@@ -190,11 +190,6 @@ def txlog(args):
         commit = parent
 
 
-def validate(args):
-    import pdb; pdb.set_trace()
-    1
-
-
 parser = argparse.ArgumentParser(description='Verne (toy) money')
 parser.add_argument('-k', '--keyfile', default='~/.vmoney')
 subparsers = parser.add_subparsers()
@@ -207,10 +202,6 @@ parser_send.add_argument('--mint', action='store_true', help='create money')
 parser_send.add_argument('amount')
 parser_send.add_argument('address')
 parser_send.set_defaults(func=send)
-
-parser_validate = subparsers.add_parser('validate', help='Validate given reference')
-parser_validate.add_argument('ref')
-parser_validate.set_defaults(func=validate)
 
 parser_log = subparsers.add_parser('txlog', help='Show transaction log')
 parser_log.set_defaults(func=txlog)

@@ -3,8 +3,8 @@ VMoney
 
 Toy cryptocurrency based on GIT.
 
-Why?
-----
+Motivation
+----------
 
 This is a proof of concept to test the idea that data driven applications can be modelled on top of versioned
 immutable data structures and that merge semantics can be used meaningfully to synchronize data as well as code.
@@ -30,7 +30,7 @@ There are two types of file in the data folder:
 5. A change output may also be created under the sender's balance folder.
 6. The sender's tx file is updated with the tx parameters and signature.
 
-Example: https://github.com/alphanode/vmoney/commit/67500d168da570c326ad52706aa97d85974d7a0c
+Example: https://github.com/alphanode/vmoney/commit/67500d1
 
 Q & A
 -----
