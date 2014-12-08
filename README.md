@@ -12,14 +12,14 @@ immutable data structures and that merge semantics can be used meaningfully to s
 How it works
 ------------
 
-The transaction ledger is contained in the GIT commit history.
-The tree pointed to by the latest commit contains the balance sheet.
-A transaction is a commit that modifies the balance sheet.
+* The transaction ledger is contained in the GIT commit history.
+* The tree pointed to by the latest commit contains the balance sheet.
+* A transaction is a commit that modifies the balance sheet.
 
-VMoney uses GIT trees and blobs to represent balances. There are 2 types of blob:
+There are two types of file in the data folder:
 
-* `data/{address}/tx`; address's last transaction details (mutable)
-* `data/{address}/balance/{txid}`; spendable outputs (immutable)
+* `data/{address}/balance/{txid}`; spendable outputs; should never conflict.
+* `data/{address}/tx`; address's last transaction details, conflicts on double spend.
 
 **Transaction flow**
 
@@ -29,6 +29,8 @@ VMoney uses GIT trees and blobs to represent balances. There are 2 types of blob
 4. An output is created under the recipient's balance folder.
 5. A change output may also be created under the sender's balance folder.
 6. The sender's tx file is updated with the tx parameters and signature.
+
+Example: https://github.com/alphanode/vmoney/commit/67500d168da570c326ad52706aa97d85974d7a0c
 
 Q & A
 -----
@@ -42,13 +44,13 @@ A transaction commit is made with the command line tool, then `git push`ed it to
 When the same inputs are spent twice, a conflict will occur on the `tx` file when the two recipients try to merge
 their repositories. This becasue `tx` files must be updated in correct sequence. The rest of the files in the data/
 folder, in contrast, should never conflict, because they have unique paths and they are never mutated, just created
-and deleted.
+once and then deleted when spent.
 
 **What if the recipients never merge their branches?**
 
 It's up to the recipients to check that received transactions have been propagated throughout the network.
 This is a service that could be provided by trusted third parties.
-In Bitcoin, the blockchain performs this function and requires no trust (at least in theory).
+In Bitcoin, the blockchain performs this function and requires no trust (in theory).
 
 **How does it check that a transaction is valid?**
 
