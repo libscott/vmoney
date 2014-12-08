@@ -1,8 +1,8 @@
 {
-    "amount": 10, 
-    "mint": true, 
+    "amount": 100, 
+    "mint": false, 
     "pubkey": "24HVuR5GhLia7aZgEjNQouM11tKQ3pM27csvm1TshGpsPqDcpDU4Sz5VE8c6ryeuXJQqwXssmofAzKwdrRrGaeJ6ujZFgGAnQGFcgkZ", 
-    "sig": "4WzLzgJVUAfQq4bLMP6cW1DFceAWHJnD8RHisaycfs8NSaTrTuZt7WVZpELcDw3x8z", 
+    "sig": "8BUENx7v3cj63g7uXEYPA2cABpPy8syDu2qdcDjB2sHxS5UCyyYXSdKk8m4cj2oHwM", 
     "to": "readme_example", 
-    "txid": "DJwjqm4JDNUjvg59hYy8v4vaPLZdRXibzT5XGmQbLUJT"
+    "txid": "HntPURGpN8ThRMkS6X1q3a8m8PfpTTJuwbMDWfTGjV5i"
 }
