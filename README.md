@@ -30,7 +30,7 @@ There are two types of file in the data folder:
 5. A change output may also be created under the sender's balance folder.
 6. The sender's tx file is updated with the tx parameters and signature.
 
-Example: https://github.com/alphanode/vmoney/commit/67500d1
+Example: https://github.com/ssadler/vmoney/commit/67500d1
 
 Q & A
 -----
